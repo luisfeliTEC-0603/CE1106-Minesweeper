@@ -10,6 +10,7 @@
 (define frame #f)
 (define new-game-button #f)
 (define panel #f)
+(define current-game-state initial-game-state) ; Use the functional game state
 
 ; Custom button class for right-click functionality
 (define right-click-button%
@@ -41,7 +42,7 @@
   ; Reveal all mines
   (for ([row (in-range grid-size-hor)])
     (for ([col (in-range grid-size-vrt)])
-      (define field-value (mine-field-value row col))
+      (define field-value (mine-field-value row col (get-mine-field-values current-game-state)))
       (define field-button (mine-field-button row col))
       (cond [(equal? field-value "💣") (send field-button set-label field-value)]))))
 
@@ -60,22 +61,27 @@
   (cond [(equal? (send button get-label) "")
          (begin
            (set-button-label button field-value)
-           (increment-clear-field-count!)
-           (cond [(= (get-clear-field-count) (- (* grid-size-hor grid-size-vrt) mine-count)) (win-game)]))]))
+           (set! current-game-state (increment-clear-field-count current-game-state))
+           (cond [(= (get-clear-field-count current-game-state) 
+                     (- (* grid-size-hor grid-size-vrt) mine-count)) 
+                  (win-game)]))]))
 
 ; Try to clear a field (handle mine or number)
 (define (try-clear-field row col)
-  (define field-value (mine-field-value row col))
+  (define field-values (get-mine-field-values current-game-state))
+  (define field-value (mine-field-value row col field-values))
   (define field-button (mine-field-button row col))
   (cond [(number? field-value)
-         (if (= 0 field-value)
-             (clear-0-fields row col)
-             (clear-field field-button field-value))]
+         (cond [(= 0 field-value)
+                (clear-0-fields row col)]
+               [else
+                (clear-field field-button field-value)])]
         [else (loose-game)]))
 
 ; Clear adjacent fields for zero-value fields
 (define (clear-0-fields row col)
-  (define field-value (mine-field-value row col))
+  (define field-values (get-mine-field-values current-game-state))
+  (define field-value (mine-field-value row col field-values))
   (define field-button (mine-field-button row col))
   (cond
     [(and (not (equal? (send field-button get-label) "0")) (equal? 0 field-value))
@@ -92,9 +98,11 @@
 (define (new-game)
   (begin
     (send new-game-button set-label "🙂")
-    (set-mine-field-values! (generate-mine-field grid-size-hor grid-size-vrt))
+    (set! current-game-state 
+          (set-mine-field-values 
+           (reset-clear-field-count current-game-state)
+           (generate-mine-field grid-size-hor grid-size-vrt)))
     (set! game-over #f)
-    (reset-clear-field-count!)
     ; Reset all buttons
     (for ([row (in-range grid-size-hor)])
       (for ([col (in-range grid-size-vrt)])
@@ -144,7 +152,10 @@
                              (cond [(equal? "" (send b get-label)) (try-clear-field i j)]))]))))
   
   ; Initialize the game state
-  (set-mine-field-values! (generate-mine-field grid-size-hor grid-size-vrt))
+  (set! current-game-state 
+        (set-mine-field-values 
+         current-game-state 
+         (generate-mine-field grid-size-hor grid-size-vrt)))
   (send frame show #t))
 
 ; Start the game
