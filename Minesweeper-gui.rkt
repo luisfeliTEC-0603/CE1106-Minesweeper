@@ -4,13 +4,117 @@
 (require racket/gui/base)
 (require "Minesweeper-logic.rkt") ; Import the functions module
 
+; Variables configurables (usadas en todo el juego)
+(define grid-size-hor (box 8))   ; columnas
+(define grid-size-vrt (box 8))   ; filas
+(define mine-count  (box 10))    ; número de minas
+
+; ================================
 ; Global variables
+; ================================
 (define mine-field-buttons null)
 (define game-over #f)
 (define frame #f)
 (define new-game-button #f)
 (define panel #f)
-(define current-game-state initial-game-state) ; Use the functional game state
+(define current-game-state initial-game-state)
+(define main-menu-frame #f)
+; ========================
+; MENÚ PRINCIPAL
+; ========================
+
+(define (start-game-from-menu rows-input cols-input difficulty-choice)
+  (define user-rows (string->number (send rows-input get-value)))
+  (define user-cols (string->number (send cols-input get-value)))
+
+  (cond
+  [(or (not (number? user-rows)) (not (number? user-cols)))
+   (send (new message%
+              [parent main-menu-frame]
+              [label "Por favor ingresa números válidos para filas y columnas"])
+         show #t)
+   (error "Entrada no numérica")]
+  
+  [(or (<= user-rows 0) (<= user-cols 0))
+   (send (new message%
+              [parent main-menu-frame]
+              [label "Las filas y columnas deben ser mayores a 0"])
+         show #t)
+   (error "Valores menores o iguales a 0")]
+  
+  [(= (* user-rows user-cols) 0)
+   (send (new message%
+              [parent main-menu-frame]
+              [label "La cuadrícula no puede ser 0x0. Mínimo 1x1"])
+         show #t)
+   (error "Cuadrícula 0x0")]
+  
+  [(> (* user-rows user-cols) 400)  ; Opcional: límite máximo para evitar problemas de rendimiento
+   (send (new message%
+              [parent main-menu-frame]
+              [label "La cuadrícula es demasiado grande. Máximo 400 celdas (ej: 20x20)"])
+         show #t)
+   (error "Cuadrícula demasiado grande")])
+
+  (define user-percent
+    (cond [(= (send difficulty-choice get-selection) 0) 0.10]   ; Fácil: 10%
+          [(= (send difficulty-choice get-selection) 1) 0.15]   ; Medio: 15%
+          [else 0.20]))                                         ; Difícil: 20%
+
+  (define total-cells (* user-rows user-cols))
+  (define calculated-mines (inexact->exact (floor (* total-cells user-percent))))
+  
+  (printf "Debug: Filas: ~a, Columnas: ~a, Total celdas: ~a, Porcentaje: ~a%, Minas calculadas: ~a~%"
+          user-rows user-cols total-cells (* user-percent 100) calculated-mines)
+  
+  (set-box! mine-count (max 1 calculated-mines)) ; Mínimo 1 mina
+  (set-box! grid-size-hor user-cols)
+  (set-box! grid-size-vrt user-rows)
+
+  (send main-menu-frame show #f)
+  (create-gui))
+
+(define (show-main-menu)
+  ; Usar la variable global main-menu-frame, no crear una local
+  (set! main-menu-frame
+        (new frame%
+             [label "Minesweeper - Menú Principal"]
+             [width 350] [height 250]))
+
+  ;; Mensaje de bienvenida
+  (new message%
+       [parent main-menu-frame]
+       [label "🎮 Bienvenido a Minesweeper"])
+
+  ;; Entradas para filas y columnas
+  (define rows-input
+    (new text-field% [parent main-menu-frame] [label "Filas:"] [init-value "8"]))
+  (define cols-input
+    (new text-field% [parent main-menu-frame] [label "Columnas:"] [init-value "8"]))
+
+  ;; Elección de dificultad
+  (define difficulty-choice
+    (new radio-box%
+         [parent main-menu-frame]
+         [label "Dificultad (% minas)"]
+         [choices (list "Fácil (10%)" "Medio (15%)" "Difícil (20%)")]
+         [style '(vertical)]))
+
+  ;; Botón iniciar juego
+  (new button%
+       [parent main-menu-frame]
+       [label "Iniciar Juego"]
+       [callback (lambda (b e)
+                   (start-game-from-menu rows-input cols-input difficulty-choice))])
+
+  ;; Botón salir
+  (new button%
+       [parent main-menu-frame]
+       [label "Salir"]
+       [callback (lambda (b e) (exit))])
+
+  ;; Mostrar menú
+  (send main-menu-frame show #t))
 
 ; Custom button class for right-click functionality
 (define right-click-button%
@@ -40,8 +144,8 @@
   (set! game-over #t)
   (send new-game-button set-label "🤕")
   ; Reveal all mines
-  (for ([row (in-range grid-size-hor)])
-    (for ([col (in-range grid-size-vrt)])
+  (for ([row (in-range (unbox grid-size-vrt))])
+    (for ([col (in-range (unbox grid-size-hor))])
       (define field-value (mine-field-value row col (get-mine-field-values current-game-state)))
       (define field-button (mine-field-button row col))
       (cond [(equal? field-value "💣") (send field-button set-label field-value)]))))
@@ -52,7 +156,7 @@
   (send new-game-button set-label "😎")
   (send (new dialog%
              [parent frame]
-             [label "You won!"]
+             [label "¡Ganaste!"]
              [min-width 200]
              [min-height 50]) show #t))
 
@@ -63,7 +167,7 @@
            (set-button-label button field-value)
            (set! current-game-state (increment-clear-field-count current-game-state))
            (cond [(= (get-clear-field-count current-game-state) 
-                     (- (* grid-size-hor grid-size-vrt) mine-count)) 
+                     (- (* (unbox grid-size-vrt) (unbox grid-size-hor)) (unbox mine-count))) 
                   (win-game)]))]))
 
 ; Try to clear a field (handle mine or number)
@@ -87,33 +191,37 @@
     [(and (not (equal? (send field-button get-label) "0")) (equal? 0 field-value))
      (begin
        (clear-field field-button field-value)
-       (define adj-fields (adjacent-fields row col grid-size-hor grid-size-vrt))
+       (define adj-fields (adjacent-fields row col (unbox grid-size-vrt) (unbox grid-size-hor)))
        ; Recursively clear adjacent zero fields
        (for ([adjacent-field (in-list adj-fields)])
          (clear-0-fields (car adjacent-field) (cdr adjacent-field))
          ))]
     [else (clear-field field-button field-value)]))
 
-; Initialize a new game
+; ================================
+; Inicializar un nuevo juego
+; ================================
 (define (new-game)
-  (begin
-    (send new-game-button set-label "🙂")
-    (set! current-game-state 
-          (set-mine-field-values 
-           (reset-clear-field-count current-game-state)
-           (generate-mine-field grid-size-hor grid-size-vrt)))
-    (set! game-over #f)
-    ; Reset all buttons
-    (for ([row (in-range grid-size-hor)])
-      (for ([col (in-range grid-size-vrt)])
-        (begin (send (mine-field-button row col) set-label "")
-               (send (mine-field-button row col) enable #t))))))
+  (send new-game-button set-label "🙂")
+  (set! current-game-state 
+        (set-mine-field-values 
+         (reset-clear-field-count current-game-state)
+         (generate-mine-field (unbox grid-size-vrt) (unbox grid-size-hor) (unbox mine-count))))
+  (set! game-over #f)
+  (for ([row (in-range (unbox grid-size-vrt))])
+    (for ([col (in-range (unbox grid-size-hor))])
+      (begin (send (mine-field-button row col) set-label "")
+             (send (mine-field-button row col) enable #t)))))
 
-; Create the main GUI
+; ================================
+; Crear GUI principal
+; ================================
 (define (create-gui)
-  (set! frame (new frame% [label "Minesweeper"] [width 500] [height 500]))
+  (set! frame (new frame% 
+                   [label "Minesweeper"] 
+                   [width (+ (* 65 (unbox grid-size-hor)) 50)] 
+                   [height (+ (* 65 (unbox grid-size-vrt)) 120)]))
   
-  ; Create "new game" button
   (set! new-game-button
         (new button%
              [parent frame]
@@ -121,17 +229,16 @@
              [font (make-object font% 25 'default 'normal 'ultraheavy)]
              [callback (lambda (b e) (new-game))]))
   
-  ; Instructions message
   (new message%
        [parent frame]
        [label "Left-Click -> Clear   |   Right-Click -> Flag"])
   
-  ; Create game grid
   (set! panel (new horizontal-panel% [parent frame] [stretchable-width #f]))
+  
   (set! mine-field-buttons
-        (for/list ([i (in-range grid-size-hor)])
+        (for/list ([i (in-range (unbox grid-size-vrt))])
           (define sub-panel (new vertical-panel% [parent panel]))
-          (for/list ([j (in-range grid-size-vrt)])
+          (for/list ([j (in-range (unbox grid-size-hor))])
             (new right-click-button%
                  [parent sub-panel]
                  [min-width 65]
@@ -149,14 +256,15 @@
                                                [(equal? "" (send b get-label))
                                                 (send b set-label "🚩")]))]
                  [callback (lambda (b e)
-                             (cond [(equal? "" (send b get-label)) (try-clear-field i j)]))]))))
+                             (cond [(equal? "" (send b get-label)) 
+                                    (try-clear-field i j)]))]))))
   
-  ; Initialize the game state
+  ; CORRECCIÓN IMPORTANTE: Pasar el número de minas a generate-mine-field
   (set! current-game-state 
         (set-mine-field-values 
          current-game-state 
-         (generate-mine-field grid-size-hor grid-size-vrt)))
+         (generate-mine-field (unbox grid-size-vrt) (unbox grid-size-hor) (unbox mine-count))))
+  
   (send frame show #t))
 
-; Start the game
-(create-gui)
+(show-main-menu)
