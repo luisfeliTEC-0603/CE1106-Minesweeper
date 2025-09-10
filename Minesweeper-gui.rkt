@@ -88,9 +88,9 @@
 
   ;; Entradas para filas y columnas
   (define rows-input
-    (new text-field% [parent main-menu-frame] [label "Filas:"] [init-value "8"]))
-  (define cols-input
     (new text-field% [parent main-menu-frame] [label "Columnas:"] [init-value "8"]))
+  (define cols-input
+    (new text-field% [parent main-menu-frame] [label "Filas:"] [init-value "8"]))
 
   ;; Elección de dificultad
   (define difficulty-choice
