@@ -12,18 +12,38 @@
 (define panel #f)
 (define current-game-state initial-game-state) ; Use the functional game state
 
-; Load sprites
+; Tamaño deseado para los sprites
+(define target-sprite-size 40)
+
+; Función para cargar y escalar sprites manualmente
+(define (load-and-scale-sprite path)
+  (define original-bmp (make-object bitmap% path))
+  (define original-width (send original-bmp get-width))
+  (define original-height (send original-bmp get-height))
+  
+  (define scaled-bmp (make-object bitmap% target-sprite-size target-sprite-size))
+  (define dc (new bitmap-dc% [bitmap scaled-bmp]))
+  
+  ; Configurar para escalado de alta calidad
+  (send dc set-smoothing 'aligned)
+  (send dc set-scale (/ target-sprite-size original-width)
+                    (/ target-sprite-size original-height))
+  (send dc draw-bitmap original-bmp 0 0)
+  
+  scaled-bmp)
+
+; Load and scale sprites
 (define number-sprites
   (for/list ([i (in-range 9)])
-    (make-object bitmap% (string-append "sprites/" (number->string i) ".png"))))
+    (load-and-scale-sprite (string-append "Resources/Sprites/" (number->string i) ".png"))))
 
-(define mine-sprite (make-object bitmap% "sprites/mine.png"))
-(define flag-sprite (make-object bitmap% "sprites/flag.png"))
-(define default-sprite (make-object bitmap% "sprites/default.png")) ; Assuming you have a default/covered sprite
+(define mine-sprite (load-and-scale-sprite "Resources/Sprites/mine.png"))
+(define flag-sprite (load-and-scale-sprite "Resources/Sprites/flag.png"))
+(define default-sprite (load-and-scale-sprite "Resources/Sprites/hidden.png"))
 
-; Get sprite dimensions (assuming all sprites are the same size)
-(define sprite-width (send default-sprite get-width))
-(define sprite-height (send default-sprite get-height))
+; Get sprite dimensions (ahora todos tienen el mismo tamaño)
+(define sprite-width target-sprite-size)
+(define sprite-height target-sprite-size)
 
 ; Cell state tracking
 (define cell-states (make-vector (* grid-size-hor grid-size-vrt) 'covered)) ; covered, revealed, or flagged
@@ -69,18 +89,18 @@
            [(equal? field-value "💣") (send dc draw-bitmap mine-sprite 0 0)])]))
     
     (super-new [style '(border)] 
-               [min-width 16] 
-               [min-height 16]
+               [min-width sprite-width] 
+               [min-height sprite-height]
                [stretchable-width #f]
                [stretchable-height #f])))
-
+  
 ; Get canvas at specific coordinates
 (define (mine-field-canvas row col) 
   (list-ref (list-ref mine-field-canvases row) col))
 
 ; Handle game over (lose)
 (define (loose-game)
-  (set! game-over #f)
+  (set! game-over #t)
   (send new-game-button set-label "🤕")
   ; Reveal all mines
   (for ([row (in-range grid-size-hor)])
