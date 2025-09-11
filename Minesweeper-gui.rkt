@@ -21,6 +21,10 @@
 (define flag-sprite (make-object bitmap% "sprites/flag.png"))
 (define default-sprite (make-object bitmap% "sprites/default.png")) ; Assuming you have a default/covered sprite
 
+; Get sprite dimensions (assuming all sprites are the same size)
+(define sprite-width (send default-sprite get-width))
+(define sprite-height (send default-sprite get-height))
+
 ; Cell state tracking
 (define cell-states (make-vector (* grid-size-hor grid-size-vrt) 'covered)) ; covered, revealed, or flagged
 
@@ -64,7 +68,11 @@
            [(number? field-value) (send dc draw-bitmap (list-ref number-sprites field-value) 0 0)]
            [(equal? field-value "💣") (send dc draw-bitmap mine-sprite 0 0)])]))
     
-    (super-new [style '(border)] [min-width 40] [min-height 40])))
+    (super-new [style '(border)] 
+               [min-width 16] 
+               [min-height 16]
+               [stretchable-width #f]
+               [stretchable-height #f])))
 
 ; Get canvas at specific coordinates
 (define (mine-field-canvas row col) 
@@ -72,7 +80,7 @@
 
 ; Handle game over (lose)
 (define (loose-game)
-  (set! game-over #t)
+  (set! game-over #f)
   (send new-game-button set-label "🤕")
   ; Reveal all mines
   (for ([row (in-range grid-size-hor)])
@@ -140,28 +148,56 @@
 
 ; Create the main GUI
 (define (create-gui)
-  (set! frame (new frame% [label "Minesweeper"] [width 500] [height 500]))
+  ; Calculate window size based on grid and sprite dimensions
+  (define window-width (+ 50 (* grid-size-vrt sprite-width)))
+  (define window-height (+ 150 (* grid-size-hor sprite-height)))
+  
+  (set! frame (new frame% 
+                   [label "Minesweeper"] 
+                   [width window-width] 
+                   [height window-height]
+                   [stretchable-width #f]  ; Prevent window resizing
+                   [stretchable-height #f]))
+  
+  ; Create main panel to hold everything
+  (define main-panel (new vertical-panel% 
+                          [parent frame]
+                          [alignment '(center center)]
+                          [stretchable-width #f]
+                          [stretchable-height #f]))
   
   ; Create "new game" button
   (set! new-game-button
         (new button%
-             [parent frame]
+             [parent main-panel]
              [label "🙂"]
              [font (make-object font% 25 'default 'normal 'ultraheavy)]
              [callback (lambda (b e) (new-game))]))
   
   ; Instructions message
   (new message%
-       [parent frame]
+       [parent main-panel]
        [label "Left-Click -> Clear   |   Right-Click -> Flag"])
   
+  ; Create game grid container
+  (define grid-container (new horizontal-panel% 
+                              [parent main-panel] 
+                              [stretchable-width #f]
+                              [stretchable-height #f]
+                              [alignment '(center center)]))
+  
   ; Create game grid
-  (set! panel (new horizontal-panel% [parent frame] [stretchable-width #f]))
   (set! mine-field-canvases
         (for/list ([i (in-range grid-size-hor)])
-          (define sub-panel (new vertical-panel% [parent panel]))
+          (define sub-panel (new vertical-panel% 
+                                 [parent grid-container] 
+                                 [stretchable-width #f]
+                                 [stretchable-height #f]))
           (for/list ([j (in-range grid-size-vrt)])
-            (new mine-cell-canvas% [parent sub-panel] [row i] [col j]))))
+            (new mine-cell-canvas% 
+                 [parent sub-panel] 
+                 [row i] 
+                 [col j]))))
   
   ; Initialize the game state
   (set! current-game-state 
