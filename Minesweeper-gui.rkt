@@ -1,39 +1,74 @@
 #lang racket
 
-; Minesweeper GUI implementation
+; Minesweeper GUI implementation with sprites
 (require racket/gui/base)
 (require "Minesweeper-logic.rkt") ; Import the functions module
 
 ; Global variables
-(define mine-field-buttons null)
+(define mine-field-canvases null)
 (define game-over #f)
 (define frame #f)
 (define new-game-button #f)
 (define panel #f)
 (define current-game-state initial-game-state) ; Use the functional game state
 
-; Custom button class for right-click functionality
-(define right-click-button%
-  (class button%
-    (init-field [right-click-callback null] [is-clickable-func (lambda () #t)])
-    (super-new)
-    (define/override (on-subwindow-event r e)
-      (cond
-        [(and (send e button-down? 'right) (is-clickable-func))
+; Load sprites
+(define number-sprites
+  (for/list ([i (in-range 9)])
+    (make-object bitmap% (string-append "sprites/" (number->string i) ".png"))))
+
+(define mine-sprite (make-object bitmap% "sprites/mine.png"))
+(define flag-sprite (make-object bitmap% "sprites/flag.png"))
+(define default-sprite (make-object bitmap% "sprites/default.png")) ; Assuming you have a default/covered sprite
+
+; Cell state tracking
+(define cell-states (make-vector (* grid-size-hor grid-size-vrt) 'covered)) ; covered, revealed, or flagged
+
+; Get cell state
+(define (get-cell-state row col)
+  (vector-ref cell-states (+ (* row grid-size-vrt) col)))
+
+; Set cell state
+(define (set-cell-state! row col state)
+  (vector-set! cell-states (+ (* row grid-size-vrt) col) state))
+
+; Custom canvas class for minefield cells
+(define mine-cell-canvas%
+  (class canvas%
+    (init-field row col)
+    (inherit refresh get-dc)
+    
+    (define/override (on-event event)
+      (when (not game-over)
+        (cond
+          [(send event button-down? 'left)
+           (when (eq? (get-cell-state row col) 'covered)
+             (try-clear-field row col))]
+          [(send event button-down? 'right)
+           (cond
+             [(eq? (get-cell-state row col) 'covered)
+              (set-cell-state! row col 'flagged)
+              (refresh)]
+             [(eq? (get-cell-state row col) 'flagged)
+              (set-cell-state! row col 'covered)
+              (refresh)])])))
+    
+    (define/override (on-paint)
+      (define dc (get-dc))
+      (case (get-cell-state row col)
+        ['covered (send dc draw-bitmap default-sprite 0 0)]
+        ['flagged (send dc draw-bitmap flag-sprite 0 0)]
+        ['revealed
+         (define field-value (mine-field-value row col (get-mine-field-values current-game-state)))
          (cond
-           [(not (null? right-click-callback)) (right-click-callback this)])]
-        [(is-clickable-func) (super on-subwindow-event r e)]))))
+           [(number? field-value) (send dc draw-bitmap (list-ref number-sprites field-value) 0 0)]
+           [(equal? field-value "💣") (send dc draw-bitmap mine-sprite 0 0)])]))
+    
+    (super-new [style '(border)] [min-width 40] [min-height 40])))
 
-; Set button label and disable it
-(define (set-button-label button value)
-  (send button enable #f)
-  (cond
-    [(number? value) (send button set-label (number->string value))]
-    [else (send button set-label value)]))
-
-; Get button at specific coordinates
-(define (mine-field-button row col) 
-  (list-ref (list-ref mine-field-buttons row) col))
+; Get canvas at specific coordinates
+(define (mine-field-canvas row col) 
+  (list-ref (list-ref mine-field-canvases row) col))
 
 ; Handle game over (lose)
 (define (loose-game)
@@ -43,8 +78,9 @@
   (for ([row (in-range grid-size-hor)])
     (for ([col (in-range grid-size-vrt)])
       (define field-value (mine-field-value row col (get-mine-field-values current-game-state)))
-      (define field-button (mine-field-button row col))
-      (cond [(equal? field-value "💣") (send field-button set-label field-value)]))))
+      (when (equal? field-value "💣")
+        (set-cell-state! row col 'revealed)
+        (send (mine-field-canvas row col) refresh)))))
 
 ; Handle game win
 (define (win-game)
@@ -57,57 +93,50 @@
              [min-height 50]) show #t))
 
 ; Clear a field (reveal it)
-(define (clear-field button field-value)
-  (cond [(equal? (send button get-label) "")
-         (begin
-           (set-button-label button field-value)
-           (set! current-game-state (increment-clear-field-count current-game-state))
-           (cond [(= (get-clear-field-count current-game-state) 
-                     (- (* grid-size-hor grid-size-vrt) mine-count)) 
-                  (win-game)]))]))
+(define (clear-field row col field-value)
+  (when (eq? (get-cell-state row col) 'covered)
+    (set-cell-state! row col 'revealed)
+    (send (mine-field-canvas row col) refresh)
+    (set! current-game-state (increment-clear-field-count current-game-state))
+    (when (= (get-clear-field-count current-game-state) 
+             (- (* grid-size-hor grid-size-vrt) mine-count))
+      (win-game))))
 
 ; Try to clear a field (handle mine or number)
 (define (try-clear-field row col)
   (define field-values (get-mine-field-values current-game-state))
   (define field-value (mine-field-value row col field-values))
-  (define field-button (mine-field-button row col))
-  (cond [(number? field-value)
-         (cond [(= 0 field-value)
-                (clear-0-fields row col)]
-               [else
-                (clear-field field-button field-value)])]
-        [else (loose-game)]))
+  (cond
+    [(number? field-value)
+     (if (= 0 field-value)
+         (clear-0-fields row col)
+         (clear-field row col field-value))]
+    [else (loose-game)]))
 
 ; Clear adjacent fields for zero-value fields
 (define (clear-0-fields row col)
   (define field-values (get-mine-field-values current-game-state))
   (define field-value (mine-field-value row col field-values))
-  (define field-button (mine-field-button row col))
-  (cond
-    [(and (not (equal? (send field-button get-label) "0")) (equal? 0 field-value))
-     (begin
-       (clear-field field-button field-value)
-       (define adj-fields (adjacent-fields row col grid-size-hor grid-size-vrt))
-       ; Recursively clear adjacent zero fields
-       (for ([adjacent-field (in-list adj-fields)])
-         (clear-0-fields (car adjacent-field) (cdr adjacent-field))
-         ))]
-    [else (clear-field field-button field-value)]))
+  (when (and (eq? (get-cell-state row col) 'covered) (equal? 0 field-value))
+    (clear-field row col field-value)
+    (define adj-fields (adjacent-fields row col grid-size-hor grid-size-vrt))
+    (for ([adjacent-field (in-list adj-fields)])
+      (clear-0-fields (car adjacent-field) (cdr adjacent-field)))))
 
 ; Initialize a new game
 (define (new-game)
-  (begin
-    (send new-game-button set-label "🙂")
-    (set! current-game-state 
-          (set-mine-field-values 
-           (reset-clear-field-count current-game-state)
-           (generate-mine-field grid-size-hor grid-size-vrt)))
-    (set! game-over #f)
-    ; Reset all buttons
-    (for ([row (in-range grid-size-hor)])
-      (for ([col (in-range grid-size-vrt)])
-        (begin (send (mine-field-button row col) set-label "")
-               (send (mine-field-button row col) enable #t))))))
+  (send new-game-button set-label "🙂")
+  (set! current-game-state 
+        (set-mine-field-values 
+         (reset-clear-field-count current-game-state)
+         (generate-mine-field grid-size-hor grid-size-vrt)))
+  (set! game-over #f)
+  ; Reset all cell states
+  (set! cell-states (make-vector (* grid-size-hor grid-size-vrt) 'covered))
+  ; Refresh all canvases
+  (for ([row (in-range grid-size-hor)])
+    (for ([col (in-range grid-size-vrt)])
+      (send (mine-field-canvas row col) refresh))))
 
 ; Create the main GUI
 (define (create-gui)
@@ -128,28 +157,11 @@
   
   ; Create game grid
   (set! panel (new horizontal-panel% [parent frame] [stretchable-width #f]))
-  (set! mine-field-buttons
+  (set! mine-field-canvases
         (for/list ([i (in-range grid-size-hor)])
           (define sub-panel (new vertical-panel% [parent panel]))
           (for/list ([j (in-range grid-size-vrt)])
-            (new right-click-button%
-                 [parent sub-panel]
-                 [min-width 65]
-                 [min-height 65]
-                 [stretchable-width #f]
-                 [stretchable-height #f]
-                 [vert-margin 0]
-                 [horiz-margin 0]
-                 [font (make-object font% 25 'default 'normal 'ultraheavy)]
-                 [label ""]
-                 [is-clickable-func (lambda () (not game-over))]
-                 [right-click-callback (lambda (b)
-                                         (cond [(equal? "🚩" (send b get-label))
-                                                (send b set-label "")]
-                                               [(equal? "" (send b get-label))
-                                                (send b set-label "🚩")]))]
-                 [callback (lambda (b e)
-                             (cond [(equal? "" (send b get-label)) (try-clear-field i j)]))]))))
+            (new mine-cell-canvas% [parent sub-panel] [row i] [col j]))))
   
   ; Initialize the game state
   (set! current-game-state 
