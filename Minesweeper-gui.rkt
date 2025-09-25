@@ -222,6 +222,6 @@
   (send frame show #t))
 
 ; ================================
-; Start application
+; Start application 
 ; ================================
 (show-main-menu)
