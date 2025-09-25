@@ -163,9 +163,9 @@
     [else (filter pred (cdr lst))]))
 
 ; Generate the mine field with random mine placement
-(define (generate-mine-field rows cols)
+(define (generate-mine-field rows cols num-mines)
   (define all-coords (all-coordinates rows cols))
-  (define mine-positions (take (shuffle all-coords) mine-count))
+  (define mine-positions (take (shuffle all-coords) num-mines))
   
   (define (generate-rows current-row acc)
     (cond
