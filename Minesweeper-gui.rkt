@@ -24,32 +24,93 @@
 (define main-menu-frame #f)
 (define cell-states null)
 
-; ================================
-; Sprite configuration
-; ================================
-(define target-sprite-size 40)
+; ===============================================
+; Funciones para tamaños relativos de la pantalla
+; ===============================================
+(define (get-screen-dimensions)
+  (with-handlers ([exn:fail? (lambda (e) 
+                               (printf "Error detectando pantalla, usando 1366x768~%")
+                               (values 1366 768))])
+    (let-values ([(w h) (get-display-size #f)])
+      (printf "DEBUG: Pantalla detectada: ~ax~a píxeles~%" w h)
+      (values w h))))
 
-(define (load-and-scale-sprite path)
+(define (calculate-window-and-cell-size rows cols)
+  (let-values ([(screen-width screen-height) (get-screen-dimensions)])
+    
+    ; AJUSTE MÁS FINO SEGÚN TAMAÑO DE PANTALLA Y CUADRÍCULA
+    (let-values ([(width-percentage height-percentage horiz-margin vert-margin)
+                  (cond 
+                    ; Pantalla pequeña con cuadrícula grande
+                    [(and (<= screen-width 1400) (> (* rows cols) 100)) 
+                     (values 0.9 0.9 20 40)]   ; Máximo espacio posible
+                    ; Pantalla pequeña con cuadrícula normal
+                    [(<= screen-width 1400) 
+                     (values 0.85 0.85 30 60)]
+                    ; Pantalla grande con cuadrícula grande  
+                    [(> (* rows cols) 100) 
+                     (values 0.65 0.75 80 150)]
+                    ; Pantalla grande normal
+                    [else 
+                     (values 0.7 0.8 100 180)])])
+      
+      (printf "DEBUG: Ajuste fino: ~a%x~a%, Márgenes: ~ax~a~%" 
+              (* width-percentage 100) (* height-percentage 100) horiz-margin vert-margin)
+      
+      (let ([max-cell-width (/ (- (* screen-width width-percentage) horiz-margin) cols)]
+            [max-cell-height (/ (- (* screen-height height-percentage) vert-margin) rows)]
+            [max-size (if (<= screen-width 1400) 50 80)])  ; Límite más bajo para pantallas pequeñas
+        
+        (let ([cell-size (exact-round (min max-size (min max-cell-width max-cell-height)))])
+          
+          (printf "DEBUG: Celda: ~apx (pantalla ~ax~a)~%" cell-size screen-width screen-height)
+          
+          (values (+ (* cols cell-size) horiz-margin)
+                  (+ (* rows cell-size) vert-margin)
+                  cell-size  
+                  cell-size))))))
+
+(define (calculate-sprite-size rows cols)
+  (let-values ([(window-width window-height sprite-width sprite-height) 
+                (calculate-window-and-cell-size rows cols)])
+    ; El tamaño del sprite es el mismo que el de la celda calculada
+    (values sprite-width sprite-height)))
+
+; ================================
+; Sprite configuration 
+; ================================
+(define target-sprite-size 40) ; Valor por defecto, se actualizará
+
+(define (load-and-scale-sprite path target-size)
   (define original-bmp (make-object bitmap% path))
   (define original-width (send original-bmp get-width))
   (define original-height (send original-bmp get-height))
-  (define scaled-bmp (make-object bitmap% target-sprite-size target-sprite-size))
+  (define scaled-bmp (make-object bitmap% target-size target-size))
   (define dc (new bitmap-dc% [bitmap scaled-bmp]))
   (send dc set-smoothing 'aligned)
-  (send dc set-scale (/ target-sprite-size original-width)
-                    (/ target-sprite-size original-height))
+  (send dc set-scale (/ target-size original-width)
+                    (/ target-size original-height))
   (send dc draw-bitmap original-bmp 0 0)
   scaled-bmp)
 
-(define number-sprites
-  (for/list ([i (in-range 9)])
-    (load-and-scale-sprite (string-append "Resources/Sprites/" (number->string i) ".png"))))
-(define mine-sprite (load-and-scale-sprite "Resources/Sprites/mine.png"))
-(define flag-sprite (load-and-scale-sprite "Resources/Sprites/flag.png"))
-(define default-sprite (load-and-scale-sprite "Resources/Sprites/hidden.png"))
+; Variables globales para los sprites (se inicializarán después)
+(define number-sprites null)
+(define mine-sprite null)
+(define flag-sprite null)
+(define default-sprite null)
+(define sprite-width 0)
+(define sprite-height 0)
 
-(define sprite-width target-sprite-size)
-(define sprite-height target-sprite-size)
+(define (initialize-sprites! sprite-size)
+  (set! target-sprite-size sprite-size)
+  (set! number-sprites
+        (for/list ([i (in-range 9)])
+          (load-and-scale-sprite (string-append "Resources/Sprites/" (number->string i) ".png") sprite-size)))
+  (set! mine-sprite (load-and-scale-sprite "Resources/Sprites/mine.png" sprite-size))
+  (set! flag-sprite (load-and-scale-sprite "Resources/Sprites/flag.png" sprite-size))
+  (set! default-sprite (load-and-scale-sprite "Resources/Sprites/hidden.png" sprite-size))
+  (set! sprite-width sprite-size)
+  (set! sprite-height sprite-size))
 
 ; ================================
 ; Cell states functions
@@ -107,7 +168,7 @@
   (send main-menu-frame show #t))
 
 ; ================================
-; Mine cell canvas class
+; Mine cell canvas class 
 ; ================================
 (define mine-cell-canvas%
   (class canvas%
@@ -133,7 +194,8 @@
          (cond
            [(number? field-value) (send dc draw-bitmap (list-ref number-sprites field-value) 0 0)]
            [(equal? field-value "💣") (send dc draw-bitmap mine-sprite 0 0)])]))
-    (super-new [style '(border)] [min-width sprite-width] [min-height sprite-height]
+    (super-new [style '(border)] 
+               [min-width sprite-width] [min-height sprite-height]
                [stretchable-width #f] [stretchable-height #f])))
 
 ; ================================
@@ -192,34 +254,59 @@
   (set! current-game-state
         (set-mine-field-values
          (reset-clear-field-count current-game-state)
-         ; <-- Aquí pasamos los 3 argumentos correctos
          (generate-mine-field (unbox grid-size-vrt) (unbox grid-size-hor) (unbox mine-count))))
   (for ([row (in-range (unbox grid-size-vrt))])
     (for ([col (in-range (unbox grid-size-hor))])
       (send (mine-field-canvas row col) refresh))))
 
 ; ================================
-; Create GUI
+; Create GUI 
 ; ================================
 (define (create-gui)
-  (define window-width (+ 50 (* (unbox grid-size-hor) sprite-width)))
-  (define window-height (+ 150 (* (unbox grid-size-vrt) sprite-height)))
-  (set! frame (new frame% [label "Minesweeper"] [width window-width] [height window-height]
+  ; Calcular tamaños relativos
+  (let-values ([(window-width window-height sprite-width sprite-height) 
+                (calculate-window-and-cell-size (unbox grid-size-vrt) (unbox grid-size-hor))])
+    
+    (printf "RESUMEN: Ventana: ~ax~a, Sprites: ~ax~a~%" 
+            window-width window-height sprite-width sprite-height)
+    
+    ; Inicializar sprites con el tamaño calculado
+    (initialize-sprites! sprite-width)
+    
+    (set! frame (new frame% [label "Minesweeper"] 
+                     [width window-width] [height window-height]
+                     [alignment '(center center)]
                      [stretchable-width #f] [stretchable-height #f]))
-  (define main-panel (new vertical-panel% [parent frame] [alignment '(center center)]
+    
+    (define main-panel (new vertical-panel% [parent frame] [alignment '(center center)]
                             [stretchable-width #f] [stretchable-height #f]))
-  (set! new-game-button (new button% [parent main-panel] [label "🙂"]
-                               [font (make-object font% 25 'default 'normal 'ultraheavy)]
+    
+    (set! new-game-button (new button% [parent main-panel] [label "🙂"]
+                               [font (make-object font% (max 20 (exact-round (* sprite-width 0.5))) 
+                                                 'default 'normal 'ultraheavy)]
                                [callback (lambda (b e) (new-game))]))
-  (new message% [parent main-panel] [label "Left-Click -> Clear   |   Right-Click -> Flag"])
-  (define grid-container (new horizontal-panel% [parent main-panel] [alignment '(center center)]))
-  (set! mine-field-canvases
-        (for/list ([i (in-range (unbox grid-size-vrt))])
-          (define sub-panel (new vertical-panel% [parent grid-container]))
-          (for/list ([j (in-range (unbox grid-size-hor))])
-            (new mine-cell-canvas% [parent sub-panel] [row i] [col j]))))
-  (new-game) ; inicializa el juego al crear la GUI
-  (send frame show #t))
+    
+    (new message% [parent main-panel] 
+         [label "Left-Click -> Clear   |   Right-Click -> Flag"]
+         [font (make-object font% (max 10 (exact-round (* sprite-width 0.2))) 
+                           'default 'normal 'normal)])
+    
+    (define grid-container (new horizontal-panel% [parent main-panel] 
+                                [alignment '(center center)]
+                                [spacing 0] [border 0]))
+    
+    (set! mine-field-canvases
+          (for/list ([i (in-range (unbox grid-size-vrt))])
+            (define sub-panel (new vertical-panel% [parent grid-container]
+                                   [spacing 0] [border 0]))
+            (for/list ([j (in-range (unbox grid-size-hor))])
+              (new mine-cell-canvas% [parent sub-panel] [row i] [col j]))))
+    
+    (initialize-cell-states!) ; Inicializar estados de las celdas
+    (new-game) ; inicializa el juego al crear la GUI
+    
+    (send frame center)
+    (send frame show #t)))
 
 ; ================================
 ; Start application 
